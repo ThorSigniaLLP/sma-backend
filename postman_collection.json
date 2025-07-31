@@ -1,0 +1,161 @@
+{
+  "info": {
+    "name": "Automation Dashboard API",
+    "description": "Test collection for the Automation Dashboard API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "https://localhost:8000/health",
+          "protocol": "https",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Test Email",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"your-email@example.com\"\n}"
+        },
+        "url": {
+          "raw": "https://localhost:8000/api/auth/test-email",
+          "protocol": "https",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["api", "auth", "test-email"]
+        }
+      }
+    },
+    {
+      "name": "Register User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"test@example.com\",\n  \"username\": \"testuser\",\n  \"full_name\": \"Test User\",\n  \"password\": \"testpassword123\",\n  \"confirm_password\": \"testpassword123\"\n}"
+        },
+        "url": {
+          "raw": "https://localhost:8000/api/auth/register",
+          "protocol": "https",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["api", "auth", "register"]
+        }
+      }
+    },
+    {
+      "name": "Send OTP",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"test@example.com\"\n}"
+        },
+        "url": {
+          "raw": "https://localhost:8000/api/auth/send-otp",
+          "protocol": "https",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["api", "auth", "send-otp"]
+        }
+      }
+    },
+    {
+      "name": "Verify OTP",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"test@example.com\",\n  \"otp\": \"123456\"\n}"
+        },
+        "url": {
+          "raw": "https://localhost:8000/api/auth/verify-otp",
+          "protocol": "https",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["api", "auth", "verify-otp"]
+        }
+      }
+    },
+    {
+      "name": "Resend OTP",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"test@example.com\"\n}"
+        },
+        "url": {
+          "raw": "https://localhost:8000/api/auth/resend-otp",
+          "protocol": "https",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["api", "auth", "resend-otp"]
+        }
+      }
+    },
+    {
+      "name": "Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"testpassword123\"\n}"
+        },
+        "url": {
+          "raw": "https://localhost:8000/api/auth/login",
+          "protocol": "https",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["api", "auth", "login"]
+        }
+      }
+    }
+  ]
+}
