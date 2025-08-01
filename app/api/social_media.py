@@ -4343,6 +4343,89 @@ async def update_scheduled_post(
             detail="Failed to update scheduled post"
         )
 
+@router.post("/social/debug/trigger-scheduler")
+async def trigger_scheduler_debug(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to manually trigger the scheduler"""
+    try:
+        from app.services.scheduler_service import scheduler_service
+        logger.info(f"🔧 Manual scheduler trigger requested by user {current_user.id}")
+        
+        # Process scheduled posts manually
+        await scheduler_service.process_scheduled_posts()
+        
+        return {
+            "success": True,
+            "message": "Scheduler triggered successfully"
+        }
+    except Exception as e:
+        logger.error(f"❌ Error triggering scheduler: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger scheduler: {str(e)}")
+
+@router.get("/social/debug/scheduled-posts-status")
+async def get_scheduled_posts_debug(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to check scheduled posts status"""
+    try:
+        from datetime import datetime
+        import pytz
+        
+        # Get all scheduled posts for this user
+        posts = db.query(ScheduledPost).filter(
+            ScheduledPost.user_id == current_user.id,
+            ScheduledPost.platform == "instagram"
+        ).order_by(ScheduledPost.scheduled_datetime.desc()).all()
+        
+        now_utc = datetime.utcnow()
+        ist = pytz.timezone("Asia/Kolkata")
+        now_local = datetime.now(ist)
+        
+        # Check for due posts
+        due_posts = db.query(ScheduledPost).filter(
+            ScheduledPost.status.in_(['scheduled', 'ready']),
+            ScheduledPost.platform == 'instagram',
+            ScheduledPost.scheduled_datetime <= now_utc,
+            ScheduledPost.is_active == True,
+            ScheduledPost.user_id == current_user.id
+        ).all()
+        
+        return {
+            "success": True,
+            "current_time_utc": now_utc.isoformat(),
+            "current_time_ist": now_local.isoformat(),
+            "total_posts": len(posts),
+            "due_posts_count": len(due_posts),
+            "posts": [
+                {
+                    "id": post.id,
+                    "caption": post.prompt[:100] + "..." if len(post.prompt) > 100 else post.prompt,
+                    "status": post.status,
+                    "is_active": post.is_active,
+                    "scheduled_datetime": post.scheduled_datetime.isoformat() if post.scheduled_datetime else None,
+                    "post_type": post.post_type.value if hasattr(post.post_type, 'value') else str(post.post_type),
+                    "is_due": post.id in [p.id for p in due_posts],
+                    "has_media": bool(post.image_url or post.video_url or (post.media_urls and len(post.media_urls) > 0))
+                }
+                for post in posts
+            ],
+            "due_posts": [
+                {
+                    "id": post.id,
+                    "caption": post.prompt[:50] + "..." if len(post.prompt) > 50 else post.prompt,
+                    "scheduled_datetime": post.scheduled_datetime.isoformat(),
+                    "post_type": post.post_type.value if hasattr(post.post_type, 'value') else str(post.post_type)
+                }
+                for post in due_posts
+            ]
+        }
+    except Exception as e:
+        logger.error(f"❌ Error getting scheduled posts debug info: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get debug info: {str(e)}")
+
 @router.delete("/social/scheduled-posts/{post_id}")
 async def delete_scheduled_post(
     post_id: int,
@@ -4397,12 +4480,17 @@ async def bulk_schedule_instagram_posts(
     scheduled_posts = []
     failed_posts = []
 
+    logger.info(f"📥 Bulk schedule request received: social_account_id={social_account_id}, posts_count={len(posts)}")
+    logger.info(f"📋 Posts data: {posts}")
+
     # Validate social account
     social_account = db.query(SocialAccount).filter(
         SocialAccount.id == social_account_id,
-        SocialAccount.platform == "instagram"
+        SocialAccount.platform == "instagram",
+        SocialAccount.user_id == current_user.id
     ).first()
     if not social_account:
+        logger.error(f"❌ Instagram account not found: social_account_id={social_account_id}, user_id={current_user.id}")
         raise HTTPException(status_code=404, detail="Instagram account not found")
 
     for idx, post in enumerate(posts):
@@ -4411,10 +4499,34 @@ async def bulk_schedule_instagram_posts(
             scheduled_date = post.get("scheduled_date")
             scheduled_time = post.get("scheduled_time")
             post_type = post.get("post_type", "photo")
-            # Add media fields as needed (image_url, media_urls, video_url, etc.)
+            
+            logger.info(f"📝 Processing post {idx + 1}/{len(posts)}: type={post_type}, date={scheduled_date}, time={scheduled_time}")
+            
+            if not caption or not scheduled_date or not scheduled_time:
+                logger.error(f"❌ Missing required fields for post {idx}: caption={bool(caption)}, date={bool(scheduled_date)}, time={bool(scheduled_time)}")
+                failed_posts.append({
+                    "index": idx,
+                    "error": "Missing required fields (caption, scheduled_date, or scheduled_time)",
+                    "caption": caption[:50] + "..." if caption else "",
+                    "scheduled_date": scheduled_date,
+                    "scheduled_time": scheduled_time
+                })
+                continue
 
             # Combine date and time as IST
-            dt = ist.localize(datetime.strptime(f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %H:%M"))
+            try:
+                dt = ist.localize(datetime.strptime(f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %H:%M"))
+                logger.info(f"📅 Parsed datetime: {dt}")
+            except ValueError as ve:
+                logger.error(f"❌ Invalid date/time format for post {idx}: {ve}")
+                failed_posts.append({
+                    "index": idx,
+                    "error": f"Invalid date/time format: {ve}",
+                    "caption": caption[:50] + "..." if caption else "",
+                    "scheduled_date": scheduled_date,
+                    "scheduled_time": scheduled_time
+                })
+                continue
 
             # Set image_url for photo posts
             image_url = None
@@ -4465,7 +4577,12 @@ async def bulk_schedule_instagram_posts(
                 reel_thumbnail_url=reel_thumbnail_url,  # Add thumbnail URL to database
             )
             db.add(scheduled_post)
+            db.flush()  # Flush to get the ID
+            
+            logger.info(f"✅ Created scheduled post {scheduled_post.id} for {post_type} at {dt}")
+            
             scheduled_posts.append({
+                "id": scheduled_post.id,
                 "caption": caption,
                 "scheduled_date": scheduled_date,
                 "scheduled_time": scheduled_time,
@@ -4476,15 +4593,22 @@ async def bulk_schedule_instagram_posts(
                 "reel_thumbnail_url": reel_thumbnail_url  # Include in response
             })
         except Exception as e:
+            logger.error(f"❌ Error processing post {idx}: {str(e)}")
             failed_posts.append({
                 "index": idx,
                 "error": str(e),
-                "caption": post.get("caption", ""),
+                "caption": post.get("caption", "")[:50] + "..." if post.get("caption") else "",
                 "scheduled_date": post.get("scheduled_date"),
                 "scheduled_time": post.get("scheduled_time")
             })
 
-    db.commit()
+    try:
+        db.commit()
+        logger.info(f"✅ Successfully committed {len(scheduled_posts)} scheduled posts to database")
+    except Exception as commit_error:
+        logger.error(f"❌ Failed to commit scheduled posts: {commit_error}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to save scheduled posts: {str(commit_error)}")
     
     # Schedule pre-posting notifications for all successfully created posts
     try:
@@ -4518,10 +4642,13 @@ async def bulk_schedule_instagram_posts(
     except Exception as e:
         logger.error(f"Error scheduling pre-posting notifications: {e}")
     
+    logger.info(f"📊 Bulk schedule completed: {len(scheduled_posts)} successful, {len(failed_posts)} failed")
+    
     return {
         "success": len(failed_posts) == 0,
         "scheduled_posts": scheduled_posts,
-        "failed_posts": failed_posts
+        "failed_posts": failed_posts,
+        "message": f"Successfully scheduled {len(scheduled_posts)} posts" + (f", {len(failed_posts)} failed" if failed_posts else "")
     }
 
 @router.put("/social/bulk-composer/content/{content_id}")

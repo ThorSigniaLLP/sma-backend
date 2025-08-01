@@ -129,40 +129,22 @@ class SchedulerService:
                     ScheduledPost.scheduled_datetime <= now_utc,
                     ScheduledPost.is_active == True
                 ).all()
-            
-            if due_posts:
-                logger.info(f"📅 Found {len(due_posts)} scheduled Instagram posts due for execution")
-                for scheduled_post in due_posts:
-                    try:
-                        # Create a new session for each post to avoid connection holding
-                        post_db = SessionLocal()
+                
+                logger.info(f"🔍 Query conditions: status in ['scheduled', 'ready'], platform='instagram', scheduled_datetime <= {now_utc}, is_active=True")
+                logger.info(f"📊 Found {len(due_posts)} due posts out of {len(all_scheduled)} total Instagram posts")
+                
+                # Process each due post immediately within the same session
+                if due_posts:
+                    logger.info(f"📅 Found {len(due_posts)} scheduled Instagram posts due for execution")
+                    for scheduled_post in due_posts:
                         try:
-                            # Re-fetch the post in the new session to avoid session conflicts
-                            fresh_post = post_db.query(ScheduledPost).filter(
-                                ScheduledPost.id == scheduled_post.id
-                            ).first()
-                            if fresh_post:
-                                logger.info(f"🔄 Processing post {fresh_post.id} - Current status: {fresh_post.status}")
-                                await self.execute_scheduled_instagram_post(fresh_post, post_db)
-                                
-                                # Verify the final status in database
-                                verification_db = SessionLocal()
-                                try:
-                                    verified_post = verification_db.query(ScheduledPost).filter(
-                                        ScheduledPost.id == scheduled_post.id
-                                    ).first()
-                                    if verified_post:
-                                        logger.info(f"🔍 VERIFICATION: Post {verified_post.id} final status in DB: {verified_post.status}, is_active: {verified_post.is_active}")
-                                    else:
-                                        logger.error(f"❌ Could not verify post {scheduled_post.id} in database")
-                                finally:
-                                    verification_db.close()
-                            else:
-                                logger.error(f"❌ Could not re-fetch scheduled post {scheduled_post.id}")
-                        finally:
-                            post_db.close()
-                    except Exception as e:
-                        logger.error(f"Failed to execute scheduled Instagram post {scheduled_post.id}: {e}")
+                            logger.info(f"🔄 Processing post {scheduled_post.id} - Current status: {scheduled_post.status}")
+                            await self.execute_scheduled_instagram_post(scheduled_post, db)
+                        except Exception as e:
+                            logger.error(f"Failed to execute scheduled Instagram post {scheduled_post.id}: {e}")
+                            import traceback
+                            traceback.print_exc()
+
                         
         except Exception as e:
             logger.error(f"Error processing scheduled Instagram posts: {e}")
@@ -270,11 +252,28 @@ class SchedulerService:
                         logger.info(f"✅ Updated scheduled post with Cloudinary image URL: {scheduled_post.image_url}")
                     else:
                         logger.error(f"❌ Failed to generate image: {image_result.get('error')}")
-                        scheduled_post.status = "failed"
-                        scheduled_post.is_active = False
-                        scheduled_post.last_executed = datetime.utcnow()
-                        db.commit()
-                        return
+                        
+                        # Check if it's a rate limit error
+                        error_msg = image_result.get('error', '').lower()
+                        if 'rate limit' in error_msg or 'quota' in error_msg:
+                            if scheduled_post.retry_count < 5:  # Max 5 retries for rate limits
+                                scheduled_post.retry_count += 1
+                                retry_delay = 10 * scheduled_post.retry_count  # Exponential backoff
+                                logger.info(f"🔄 AI rate limit detected, rescheduling post {scheduled_post.id} for {retry_delay} minutes later (retry {scheduled_post.retry_count}/5)")
+                                scheduled_post.scheduled_datetime = datetime.utcnow() + timedelta(minutes=retry_delay)
+                                scheduled_post.last_executed = datetime.utcnow()
+                                db.commit()
+                                return
+                            else:
+                                logger.error(f"❌ Post {scheduled_post.id} exceeded max AI retry attempts (5), marking as failed")
+                                # Fall through to mark as failed
+                        else:
+                            # For other errors, mark as failed
+                            scheduled_post.status = "failed"
+                            scheduled_post.is_active = False
+                            scheduled_post.last_executed = datetime.utcnow()
+                            db.commit()
+                            return
                 
                 has_media = bool(scheduled_post.image_url)
                 logger.info(f"📸 Photo post - Image URL: {scheduled_post.image_url}")
@@ -299,12 +298,28 @@ class SchedulerService:
                         scheduled_post.media_urls = carousel_urls
                         logger.info(f"✅ Updated scheduled post with {len(carousel_urls)} Cloudinary image URLs for carousel")
                     else:
-                        logger.error(f"❌ Failed to generate enough images for carousel")
-                        scheduled_post.status = "failed"
-                        scheduled_post.is_active = False
-                        scheduled_post.last_executed = datetime.utcnow()
-                        db.commit()
-                        return
+                        logger.error(f"❌ Failed to generate enough images for carousel (got {len(carousel_urls)}/3)")
+                        
+                        # Check if any generation failed due to rate limits
+                        if len(carousel_urls) == 0:
+                            if scheduled_post.retry_count < 5:  # Max 5 retries for rate limits
+                                scheduled_post.retry_count += 1
+                                retry_delay = 10 * scheduled_post.retry_count  # Exponential backoff
+                                logger.info(f"🔄 No carousel images generated (likely rate limit), rescheduling post {scheduled_post.id} for {retry_delay} minutes later (retry {scheduled_post.retry_count}/5)")
+                                scheduled_post.scheduled_datetime = datetime.utcnow() + timedelta(minutes=retry_delay)
+                                scheduled_post.last_executed = datetime.utcnow()
+                                db.commit()
+                                return
+                            else:
+                                logger.error(f"❌ Post {scheduled_post.id} exceeded max AI retry attempts (5), marking as failed")
+                                # Fall through to mark as failed
+                        else:
+                            # Partial failure - mark as failed
+                            scheduled_post.status = "failed"
+                            scheduled_post.is_active = False
+                            scheduled_post.last_executed = datetime.utcnow()
+                            db.commit()
+                            return
                 
                 has_media = bool(scheduled_post.media_urls and len(scheduled_post.media_urls) > 0)
                 logger.info(f"🖼️ Carousel post - Media URLs: {scheduled_post.media_urls}")
@@ -445,10 +460,51 @@ class SchedulerService:
                 else:
                     # Update status to failed
                     old_status = scheduled_post.status
-                    scheduled_post.status = "failed"
-                    error_message = result.get('error', 'Unknown error occurred')
+                    error_message = result.get('error', 'Unknown error occurred') if result else 'No response from Instagram API'
                     
                     logger.error(f"❌ Failed to post {post_type} to Instagram: {error_message}")
+                    
+                    # Check for specific error types that might be retryable
+                    if result and isinstance(error_message, str):
+                        error_lower = error_message.lower()
+                        
+                        # Check for rate limit or temporary errors
+                        if any(keyword in error_lower for keyword in ['rate limit', 'temporarily unavailable', 'try again later', 'quota exceeded']):
+                            if scheduled_post.retry_count < 3:  # Max 3 retries
+                                scheduled_post.retry_count += 1
+                                retry_delay = 15 * scheduled_post.retry_count  # Exponential backoff
+                                logger.info(f"🔄 Temporary error detected, rescheduling post {scheduled_post.id} for {retry_delay} minutes later (retry {scheduled_post.retry_count}/3)")
+                                scheduled_post.scheduled_datetime = datetime.utcnow() + timedelta(minutes=retry_delay)
+                                scheduled_post.last_executed = datetime.utcnow()
+                                db.commit()
+                                return
+                            else:
+                                logger.error(f"❌ Post {scheduled_post.id} exceeded max retries (3), marking as failed")
+                                # Fall through to mark as failed
+                        
+                        # Check for media-related errors that might need media regeneration
+                        elif any(keyword in error_lower for keyword in ['media', 'image', 'video', 'download', 'fetch']):
+                            if scheduled_post.retry_count < 2:  # Max 2 retries for media errors
+                                scheduled_post.retry_count += 1
+                                logger.info(f"🔄 Media error detected, clearing media and rescheduling post {scheduled_post.id} for 5 minutes later (retry {scheduled_post.retry_count}/2)")
+                                # Clear the problematic media so it gets regenerated
+                                if post_type == "photo":
+                                    scheduled_post.image_url = None
+                                elif post_type == "carousel":
+                                    scheduled_post.media_urls = None
+                                elif post_type == "reel":
+                                    scheduled_post.video_url = None
+                                
+                                scheduled_post.scheduled_datetime = datetime.utcnow() + timedelta(minutes=5)
+                                scheduled_post.last_executed = datetime.utcnow()
+                                db.commit()
+                                return
+                            else:
+                                logger.error(f"❌ Post {scheduled_post.id} exceeded max media retries (2), marking as failed")
+                                # Fall through to mark as failed
+                    
+                    # For other errors, mark as failed
+                    scheduled_post.status = "failed"
                     logger.info(f"🔄 Updating scheduled post {scheduled_post.id} status from '{old_status}' to 'failed'")
                     
                     try:

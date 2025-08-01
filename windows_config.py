@@ -1,76 +1,93 @@
+#!/usr/bin/env python3
 """
 Windows-specific configuration and optimizations for the FastAPI server.
-This module helps resolve file descriptor limits and other Windows-specific issues.
 """
 
 import os
 import sys
-import asyncio
-import logging
-
-logger = logging.getLogger(__name__)
+import gc
+import threading
+import time
+from typing import Dict, Any
 
 def configure_windows_limits():
     """Configure Windows-specific limits and optimizations."""
-    
-    # Set asyncio event loop policy for Windows
-    if sys.platform == "win32":
-        # Use ProactorEventLoop for better Windows compatibility
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        logger.info("✅ Windows ProactorEventLoop policy set")
+    try:
+        # Set environment variables for better performance
+        os.environ['PYTHONUNBUFFERED'] = '1'
+        os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
         
-        # Set environment variables to limit connections - very high limits to prevent 503 errors
-        os.environ.setdefault("UVICORN_LIMIT_CONCURRENCY", "10000")
-        os.environ.setdefault("UVICORN_LIMIT_MAX_REQUESTS", "50000")
+        # Configure garbage collection for better memory management
+        gc.set_threshold(700, 10, 10)
         
-        # WebSocket-friendly timeouts
-        os.environ.setdefault("ASYNCIO_TIMEOUT", "60")
-        os.environ.setdefault("WEBSOCKET_TIMEOUT", "30")
-        os.environ.setdefault("WEBSOCKET_PING_INTERVAL", "20")
-        os.environ.setdefault("WEBSOCKET_PING_TIMEOUT", "10")
-        
-        logger.info("✅ Windows-specific limits configured")
-        
-        return True
-    
-    return False
+        print("✅ Windows optimizations configured")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not configure Windows optimizations: {e}")
 
-def get_windows_uvicorn_config():
-    """Get Windows-optimized uvicorn configuration."""
+def get_windows_uvicorn_config() -> Dict[str, Any]:
+    """Get Windows-optimized Uvicorn configuration."""
     return {
-        "host": "localhost",
+        "host": "127.0.0.1",
         "port": 8000,
         "workers": 1,  # Single worker for Windows
-        "limit_concurrency": 10000,  # Very high limit to prevent 503 errors
-        "limit_max_requests": 50000,  # Very high request limit
-        "timeout_keep_alive": 60,  # Longer keep-alive for WebSockets
-        "timeout_graceful_shutdown": 60,  # Longer graceful shutdown
-        "ws_ping_interval": 20,  # WebSocket ping interval
-        "ws_ping_timeout": 10,  # WebSocket ping timeout
-        "use_colors": True,
         "loop": "asyncio",
-        "access_log": False,  # Disable access log to reduce overhead
+        "access_log": True,
+        "use_colors": True,
+        "reload_dirs": ["app"],
+        "reload_excludes": ["*.pyc", "__pycache__", "*.log"],
     }
 
 def cleanup_resources():
-    """Clean up resources to prevent file descriptor leaks."""
+    """Clean up resources on shutdown."""
     try:
         # Force garbage collection
-        import gc
         gc.collect()
         
-        # Close any lingering asyncio resources
-        if sys.platform == "win32":
-            loop = asyncio.get_event_loop()
-            if hasattr(loop, '_selector') and loop._selector:
-                # Close selector to free file descriptors
-                try:
-                    loop._selector.close()
-                except:
-                    pass
+        # Give threads time to cleanup
+        time.sleep(0.1)
         
-        logger.info("✅ Resources cleaned up")
-        return True
+        print("✅ Resources cleaned up")
     except Exception as e:
-        logger.error(f"❌ Error cleaning up resources: {e}")
-        return False
+        print(f"⚠️  Warning: Error during cleanup: {e}")
+
+# Background resource monitor (optional)
+class ResourceMonitor:
+    """Simple resource monitor for development."""
+    
+    def __init__(self):
+        self.running = False
+        self.thread = None
+    
+    def start(self):
+        """Start monitoring resources."""
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._monitor, daemon=True)
+            self.thread.start()
+    
+    def stop(self):
+        """Stop monitoring resources."""
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1)
+    
+    def _monitor(self):
+        """Monitor system resources."""
+        while self.running:
+            try:
+                # Simple memory check
+                gc.collect()
+                time.sleep(30)  # Check every 30 seconds
+            except Exception:
+                break
+
+# Global resource monitor instance
+_resource_monitor = ResourceMonitor()
+
+def start_resource_monitoring():
+    """Start background resource monitoring."""
+    _resource_monitor.start()
+
+def stop_resource_monitoring():
+    """Stop background resource monitoring."""
+    _resource_monitor.stop()

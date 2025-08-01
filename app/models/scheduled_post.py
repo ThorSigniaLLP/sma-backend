@@ -51,9 +51,10 @@ class ScheduledPost(Base):
     
     # Status
     status = Column(String(20), nullable=False, default="scheduled") # Status field (scheduled, posted, failed)
-    is_active = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)  # Changed to True so posts are active by default
     last_executed = Column(DateTime(timezone=True), nullable=True)
     next_execution = Column(DateTime(timezone=True), nullable=True)
+    retry_count = Column(Integer, default=0)  # Track retry attempts
     
     # Metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now())
