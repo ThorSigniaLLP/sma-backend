@@ -15,12 +15,9 @@ import sys
 from pathlib import Path
 import time
 
-# Configure Windows-specific optimizations
 if sys.platform == "win32":
-    # Set event loop policy for Windows
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     
-    # Apply Windows-specific configuration
     from windows_config import configure_windows_limits
     configure_windows_limits()
 
@@ -39,24 +36,15 @@ app = FastAPI(
     redoc_url="/redoc" if settings.debug else None,
 )
 
-# Create temp_images directory if it doesn't exist
 temp_images_path = Path("temp_images")
 temp_images_path.mkdir(exist_ok=True)
 
-# Mount the static files
 app.mount("/temp_images", StaticFiles(directory="temp_images"), name="temp_images")
 
-# Temporarily disable rate limiting to eliminate 503 errors
-# @app.middleware("http")
-# async def rate_limiting(request: Request, call_next):
-#     return await rate_limit_middleware(request, call_next)
-
-# Add request logging and concurrency handling middleware
 @app.middleware("http")
 async def log_requests_and_handle_concurrency(request: Request, call_next):
     start_time = time.time()
     
-    # Skip logging for frequent endpoints to reduce overhead
     skip_logging = any(path in request.url.path for path in ["/health", "/api/notifications", "/api/social/scheduled-posts"])
     
     if not skip_logging:
@@ -65,7 +53,6 @@ async def log_requests_and_handle_concurrency(request: Request, call_next):
     try:
         response = await call_next(request)
         
-        # Only add COOP headers for OAuth callback routes to avoid interfering with other requests
         if "/auth/google/callback" in str(request.url):
             response.headers["Cross-Origin-Opener-Policy"] = "unsafe-none"
             response.headers["Cross-Origin-Embedder-Policy"] = "unsafe-none"
@@ -127,7 +114,6 @@ async def log_requests_and_handle_concurrency(request: Request, call_next):
         # Re-raise other exceptions
         raise e
 
-# Add CORS middleware with explicit configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if settings.debug else [
@@ -145,7 +131,6 @@ app.add_middleware(
     max_age=3600,
 )
 
-# Add trusted host middleware for production
 if settings.environment == "production":
     app.add_middleware(
         TrustedHostMiddleware,
