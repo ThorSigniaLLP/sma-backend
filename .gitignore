@@ -72,3 +72,4 @@ temp_images/
 .DS_Store
 Thumbs.db
 .env
+/alembic/versions/*.py

@@ -8,7 +8,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql://postgres:Thor@host.docker.internal:5432/sm-auto
+      - DATABASE_URL=postgresql://postgres:anything@host.docker.internal:5433/SMA
       - DB_HOST=host.docker.internal
     depends_on:
       - db
@@ -16,11 +16,11 @@ services:
   db:
     image: postgres:15
     environment:
-      POSTGRES_DB: sm-auto
+      POSTGRES_DB: SMA
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: Thor
+      POSTGRES_PASSWORD: anything
     ports:
-      - "5432:5432"
+      - "5433:5433"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
