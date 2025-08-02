@@ -7,12 +7,12 @@ import dotenv
 dotenv.load_dotenv()
 class Settings(BaseSettings):
     # Database - PostgreSQL configuration
-    database_url: str = os.getenv("DATABASE_URL", "postgresql://postgres:Thor@host.docker.internal:5432/sm-auto")
+    database_url: str = os.getenv("DATABASE_URL", "postgresql://postgres:anything@host.docker.internal:5433/SMA")
     
     # PostgreSQL specific settings
     db_host: str = os.getenv("DB_HOST", "localhost")
-    db_port: int = int(os.getenv("DB_PORT", "5432"))
-    db_name: str = os.getenv("DB_NAME", "sm-auto")
+    db_port: int = int(os.getenv("DB_PORT", "5433"))
+    db_name: str = os.getenv("DB_NAME", "SMA")
     db_user: str = os.getenv("DB_USER", "postgres")
     db_password: str = os.getenv("DB_PASSWORD", "password")
 
