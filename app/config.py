@@ -7,18 +7,18 @@ import dotenv
 dotenv.load_dotenv()
 class Settings(BaseSettings):
     # Database - PostgreSQL configuration
-    database_url: str = os.getenv("DATABASE_URL")
+    database_url: str = os.getenv("DATABASE_URL", "postgresql://postgres:Thor@host.docker.internal:5432/sm-auto")
     
     # PostgreSQL specific settings
     db_host: str = os.getenv("DB_HOST", "localhost")
     db_port: int = int(os.getenv("DB_PORT", "5432"))
-    db_name: str = os.getenv("DB_NAME", "automation_dashboard")
+    db_name: str = os.getenv("DB_NAME", "sm-auto")
     db_user: str = os.getenv("DB_USER", "postgres")
-    db_password: str = os.getenv("DB_PASSWORD")
+    db_password: str = os.getenv("DB_PASSWORD", "password")
 
     # JWT Authentication
-    secret_key: str = os.getenv("SECRET_KEY")
-    algorithm: str = os.getenv("ALGORITHM")
+    secret_key: str = os.getenv("SECRET_KEY", "your-secret-key-here")
+    algorithm: str = os.getenv("ALGORITHM", "HS256")
     access_token_expire_minutes: int = 440 
 
     # Facebook Integration
